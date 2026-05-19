@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from datetime import datetime
+import json
 
 app = FastAPI(title="Emission-Eye IoT Server")
 
@@ -32,12 +33,24 @@ async def health_post():
 
 @app.post("/api/data/")
 async def receive_data(data: SensorData):
+    record = {
+        "received_at": datetime.utcnow().isoformat(),
+        "gateway_id": data.gateway_id,
+        "node_id": data.node_id,
+        "sensor1": data.sensor1,
+        "sensor2": data.sensor2,
+        "sensor3": data.sensor3,
+        "sensor4": data.sensor4,
+        "timestamp": data.timestamp
+    }
 
-    print("Received sensor data:", data)
+    with open("data_log.jsonl", "a") as f:
+        f.write(json.dumps(record) + "\n")
+
+    print("Saved sensor data:", record)
 
     return {
         "status": "ok",
-        "message": "data received",
-        "received_at": datetime.utcnow().isoformat(),
-        "data": data
+        "message": "data saved",
+        "data": record
     }
