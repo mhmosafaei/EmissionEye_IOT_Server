@@ -1,12 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
 import json
+import os
 
 app = FastAPI(title="Emission-Eye IoT Server")
 
 
-# Store latest received packet in memory
 latest_data = {}
 
 
@@ -25,6 +25,11 @@ async def root():
     return {"status": "Emission-Eye IoT Server is running"}
 
 
+@app.head("/")
+async def root_head():
+    return
+
+
 @app.get("/health")
 async def health_get():
     return {"status": "ok"}
@@ -37,7 +42,6 @@ async def health_post():
 
 @app.post("/api/data/")
 async def receive_data(data: SensorData):
-
     global latest_data
 
     record = {
@@ -48,13 +52,11 @@ async def receive_data(data: SensorData):
         "sensor2": data.sensor2,
         "sensor3": data.sensor3,
         "sensor4": data.sensor4,
-        "timestamp": data.timestamp
+        "timestamp": data.timestamp,
     }
 
-    # Save latest packet in memory
     latest_data = record
 
-    # Append packet to local log file
     with open("data_log.jsonl", "a") as f:
         f.write(json.dumps(record) + "\n")
 
@@ -63,13 +65,35 @@ async def receive_data(data: SensorData):
     return {
         "status": "ok",
         "message": "data saved",
-        "data": record
+        "data": record,
     }
 
 
 @app.get("/api/data/latest")
 async def get_latest_data(gateway_id: int, node_id: int):
-
     global latest_data
 
-    return latest_data
+    if latest_data:
+        if (
+            latest_data.get("gateway_id") == gateway_id
+            and latest_data.get("node_id") == node_id
+        ):
+            return latest_data
+
+    if os.path.exists("data_log.jsonl"):
+        with open("data_log.jsonl", "r") as f:
+            lines = f.readlines()
+
+        for line in reversed(lines):
+            try:
+                record = json.loads(line)
+                if (
+                    record.get("gateway_id") == gateway_id
+                    and record.get("node_id") == node_id
+                ):
+                    latest_data = record
+                    return record
+            except json.JSONDecodeError:
+                continue
+
+    raise HTTPException(status_code=404, detail="No telemetry received yet")
