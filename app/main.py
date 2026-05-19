@@ -1,99 +1,113 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from datetime import datetime
 import json
 import os
+import time
+from urllib.parse import parse_qs, urlparse
 
-app = FastAPI(title="Emission-Eye IoT Server")
+import requests
 
+DEFAULT_PROJECT_REF = "jvsmabozwhtyqxdjnoiz"
+DEFAULT_FASTAPI_URL = "https://emissioneye-iot-server.onrender.com/api/data/latest?gateway_id=1&node_id=1"
+DEFAULT_SUPABASE_URL = f"https://{DEFAULT_PROJECT_REF}.supabase.co"
+DEFAULT_EDGE_FUNCTION_URL = f"https://{DEFAULT_PROJECT_REF}.functions.supabase.co/ingest-telemetry"
 
-latest_data = {}
+# Safer: set this from environment variable if possible
+DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2c21hYm96d2h0eXF4ZGpub2l6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYxMDc2NDUsImV4cCI6MjA5MTY4MzY0NX0.BaXDro_ziX_zyKXvpTKZXbEN1T97-Iih0zcfsygXgas"
 
+DEFAULT_POLL_INTERVAL_SECONDS = 5
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 10
 
-class SensorData(BaseModel):
-    gateway_id: int
-    node_id: int
-    sensor1: int
-    sensor2: int
-    sensor3: int
-    sensor4: int
-    timestamp: str
+FASTAPI_URL = os.getenv("FASTAPI_URL", DEFAULT_FASTAPI_URL)
+SUPABASE_URL = os.getenv("SUPABASE_URL", DEFAULT_SUPABASE_URL).rstrip("/")
+EDGE_FUNCTION_URL = os.getenv("EDGE_FUNCTION_URL", DEFAULT_EDGE_FUNCTION_URL)
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", DEFAULT_SUPABASE_ANON_KEY)
 
+POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", DEFAULT_POLL_INTERVAL_SECONDS))
+REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", DEFAULT_REQUEST_TIMEOUT_SECONDS))
 
-@app.get("/")
-async def root():
-    return {"status": "Emission-Eye IoT Server is running"}
+MONITORED_GATEWAY_ID = int(parse_qs(urlparse(FASTAPI_URL).query).get("gateway_id", ["1"])[0])
+MONITORED_NODE_ID = int(parse_qs(urlparse(FASTAPI_URL).query).get("node_id", ["1"])[0])
 
-
-@app.head("/")
-async def root_head():
-    return
-
-
-@app.get("/health")
-async def health_get():
-    return {"status": "ok"}
+last_signature = None
 
 
-@app.post("/health")
-async def health_post():
-    return {"status": "ok"}
+def is_valid_payload(data: dict) -> bool:
+    return (
+        isinstance(data, dict)
+        and data.get("gateway_id") is not None
+        and data.get("node_id") is not None
+        and data.get("timestamp") is not None
+    )
 
 
-@app.post("/api/data/")
-async def receive_data(data: SensorData):
-    global latest_data
+while True:
+    try:
+        res = requests.get(FASTAPI_URL, timeout=REQUEST_TIMEOUT_SECONDS)
 
-    record = {
-        "received_at": datetime.utcnow().isoformat(),
-        "gateway_id": data.gateway_id,
-        "node_id": data.node_id,
-        "sensor1": data.sensor1,
-        "sensor2": data.sensor2,
-        "sensor3": data.sensor3,
-        "sensor4": data.sensor4,
-        "timestamp": data.timestamp,
-    }
+        if res.status_code == 404:
+            print("No telemetry available yet. Waiting for gateway data.")
+            time.sleep(POLL_INTERVAL_SECONDS)
+            continue
 
-    latest_data = record
+        if res.status_code != 200:
+            print("FastAPI returned:", res.status_code, res.text)
+            time.sleep(POLL_INTERVAL_SECONDS)
+            continue
 
-    with open("data_log.jsonl", "a") as f:
-        f.write(json.dumps(record) + "\n")
+        data = res.json()
+        print("Latest payload:", json.dumps(data, indent=2))
 
-    print("Saved sensor data:", record)
+        if not is_valid_payload(data):
+            print("Invalid or empty payload. Skipping.")
+            time.sleep(POLL_INTERVAL_SECONDS)
+            continue
 
-    return {
-        "status": "ok",
-        "message": "data saved",
-        "data": record,
-    }
+        signature = (
+            data.get("received_at"),
+            data.get("timestamp"),
+            data.get("gateway_id"),
+            data.get("node_id"),
+            data.get("sensor1"),
+            data.get("sensor2"),
+            data.get("sensor3"),
+            data.get("sensor4"),
+            data.get("status", 1),
+        )
 
+        if signature == last_signature:
+            print("No new data")
+            time.sleep(POLL_INTERVAL_SECONDS)
+            continue
 
-@app.get("/api/data/latest")
-async def get_latest_data(gateway_id: int, node_id: int):
-    global latest_data
+        print("New data found")
 
-    if latest_data:
-        if (
-            latest_data.get("gateway_id") == gateway_id
-            and latest_data.get("node_id") == node_id
-        ):
-            return latest_data
+        edge_payload = {
+            "gateway_id": data.get("gateway_id"),
+            "node_id": data.get("node_id"),
+            "sensor1": data.get("sensor1"),
+            "sensor2": data.get("sensor2"),
+            "sensor3": data.get("sensor3"),
+            "sensor4": data.get("sensor4"),
+            "status": data.get("status", 1),
+            "reading_timestamp": data.get("timestamp"),
+        }
 
-    if os.path.exists("data_log.jsonl"):
-        with open("data_log.jsonl", "r") as f:
-            lines = f.readlines()
+        response = requests.post(
+            EDGE_FUNCTION_URL,
+            json=edge_payload,
+            headers={
+                "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
 
-        for line in reversed(lines):
-            try:
-                record = json.loads(line)
-                if (
-                    record.get("gateway_id") == gateway_id
-                    and record.get("node_id") == node_id
-                ):
-                    latest_data = record
-                    return record
-            except json.JSONDecodeError:
-                continue
+        print("Sent to Edge:", response.status_code, response.text)
+        response.raise_for_status()
 
-    raise HTTPException(status_code=404, detail="No telemetry received yet")
+        last_signature = signature
+
+    except Exception as e:
+        print("Error:", str(e))
+        print("Skipping alert creation for now.")
+
+    time.sleep(POLL_INTERVAL_SECONDS)
