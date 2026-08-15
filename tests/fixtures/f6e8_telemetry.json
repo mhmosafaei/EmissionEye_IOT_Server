@@ -1,0 +1,51 @@
+{
+  "gateway_id": "ee-gateway-roger",
+  "node_id": "F6E8",
+  "legacy_gateway_id": 1,
+  "legacy_node_id": 1,
+  "sequence": 42,
+  "hop": 0,
+  "sensor_status_bits": 7,
+  "timestamp": "2026-08-15T15:45:43Z",
+  "environmental": {
+    "temperature_c": 24.77,
+    "relative_humidity_percent": 36.9,
+    "pressure_hpa": 1020.41
+  },
+  "air_quality": {
+    "aqi": 2,
+    "tvoc_ppb": 102,
+    "eco2_ppm": 553,
+    "mox_ohm": 31849
+  },
+  "motion": {
+    "acceleration_mps2": {
+      "x": 9.29,
+      "y": -0.89,
+      "z": 1.46
+    },
+    "gyroscope_rad_s": {
+      "x": 0.47,
+      "y": -0.78,
+      "z": -0.43
+    }
+  },
+  "lora": {
+    "frequency_hz": 868000000,
+    "bandwidth_hz": 125000,
+    "spreading_factor": 7,
+    "rssi_dbm": -31,
+    "snr_db": 12.25,
+    "packet_bytes": 208
+  },
+  "gateway_gnss": {
+    "fix": false,
+    "latitude": null,
+    "longitude": null,
+    "altitude_m": null,
+    "satellites_used": 0,
+    "satellites_visible": 6,
+    "antenna_status": "ok",
+    "fix_age_seconds": null
+  }
+}
